@@ -117,7 +117,7 @@ func checkHeader(data []byte) (int, error) {
 	if len(data) < 2 {
 		return 0, fmt.Errorf("too less data for header")
 	}
-	if (data[0] == unix.AF_INET || data[0] == unix.AF_INET6) && data[1] == unix.NFNETLINK_V0 {
+	if (data[0] == unix.AF_INET || data[0] == unix.AF_INET6 || data[0] == unix.AF_BRIDGE) && data[1] == unix.NFNETLINK_V0 {
 		return 4, nil
 	}
 	return 0, fmt.Errorf("invalid header %#v", data[:2])
