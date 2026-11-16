@@ -105,6 +105,20 @@ func extractAttribute(log Logger, a *Attribute, data []byte) error {
 		case nfQaPriority:
 			skbPrio := ad.Uint32()
 			a.SkbPrio = &skbPrio
+		case nfQaVLAN:
+			ad.Nested(func(nad *netlink.AttributeDecoder) error {
+				for nad.Next() {
+					switch nad.Type() {
+					case nfQaVlanProto:
+						proto := nad.Uint16()
+						a.VlanProto = &proto
+					case nfQaVlanTCI:
+						tci := nad.Uint16()
+						a.VlanTCI = &tci
+					}
+				}
+				return nil
+			})
 		default:
 			log.Errorf("Unknown attribute Type: 0x%x\tData: %v", ad.Type(), ad.Bytes())
 		}
