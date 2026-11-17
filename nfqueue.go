@@ -14,6 +14,9 @@ import (
 
 var _ Logger = (*devNull)(nil)
 
+// unbindTimeout bounds the wait for the kernel's ack of the final unbind.
+const unbindTimeout = time.Second
+
 // devNull satisfies the Logger interface.
 type devNull struct{}
 
@@ -350,7 +353,17 @@ func (nfqueue *Nfqueue) setVerdict(id uint32, verdict int, batch bool, attribute
 }
 
 func (nfqueue *Nfqueue) socketCallback(ctx context.Context, fn HookFunc, errfn ErrorFunc, seq uint32) {
+	stop := make(chan struct{})
+	stopped := make(chan struct{})
 	defer func() {
+		// the cancel goroutine below may set the read deadline in the past,
+		// which would fail the unbind's ack with an i/o timeout. Wait for it
+		// to exit so it cannot do so after the deadline is reset here.
+		close(stop)
+		<-stopped
+		if err := nfqueue.Con.SetReadDeadline(time.Now().Add(unbindTimeout)); err != nil {
+			nfqueue.logger.Errorf("Could not reset read deadline: %v", err)
+		}
 		// unbinding from queue
 		_, err := nfqueue.setConfig(uint8(unix.AF_UNSPEC), seq, nfqueue.queue, []netlink.Attribute{
 			{Type: nfQaCfgCmd, Data: []byte{nfUlnlCfgCmdUnbind, 0x0, 0x0, byte(nfqueue.family)}},
@@ -363,12 +376,15 @@ func (nfqueue *Nfqueue) socketCallback(ctx context.Context, fn HookFunc, errfn E
 	nfqueue.wg.Add(1)
 	go func() {
 		defer nfqueue.wg.Done()
+		defer close(stopped)
 
-		// block until context is done
-		<-ctx.Done()
-		// Set the read deadline to a point in the past to interrupt
-		// possible blocking Receive() calls.
-		nfqueue.Con.SetReadDeadline(time.Now().Add(-1 * time.Second))
+		select {
+		case <-ctx.Done():
+			// Set the read deadline to a point in the past to interrupt
+			// possible blocking Receive() calls.
+			nfqueue.Con.SetReadDeadline(time.Now().Add(-1 * time.Second))
+		case <-stop:
+		}
 	}()
 
 	for {
